@@ -1,5 +1,7 @@
 # 🐛 BBAT - Bug Bounty Automation Toolkit v3.0.0
 
+**Repository:** https://github.com/Eliahhango/-BBAT-v3.0.0
+
 A modular, extensible Python framework for **authorized** bug bounty reconnaissance, vulnerability detection, and reporting.
 
 > ⚠️ **Disclaimer:** This tool is intended solely for security research on systems you own or have explicit written authorization to test (e.g., bug bounty programs, penetration testing engagements). Unauthorized access to computer systems is illegal.
@@ -46,8 +48,8 @@ A modular, extensible Python framework for **authorized** bug bounty reconnaissa
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd bbat
+git clone https://github.com/Eliahhango/-BBAT-v3.0.0.git
+cd -BBAT-v3.0.0
 
 # Create virtual environment (recommended)
 python -m venv venv
@@ -257,5 +259,4 @@ MIT License – See LICENSE file for details.
 
 **BBAT v3.0.0** — Built for authorized security research.
 
-# -BBAT-v3.0.0
-
+**GitHub:** https://github.com/Eliahhango/-BBAT-v3.0.0
