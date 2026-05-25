@@ -1,5 +1,6 @@
 """
 Utility helpers for BBAT.
+All paths resolve absolutely via BBAT_BASE_DIR env var or __file__ fallback.
 """
 
 import json
@@ -8,6 +9,10 @@ import re
 from datetime import datetime
 from urllib.parse import urlparse
 import random
+
+# ─── Absolute Base Directory ────────────────────────────────────────
+BBAT_BASE_DIR = os.environ.get("BBAT_BASE_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",

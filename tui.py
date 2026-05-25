@@ -1,12 +1,24 @@
 """
 BBAT TUI — Professional Terminal User Interface
-Textual + Rich powered interface for BBAT v3.1.0
-Launch: python main.py --tui  OR  python tui.py
+Textual + Rich powered interface for BBAT v3.2.0
+Launch: bbat  (after install.sh)  OR  python tui.py
 """
 
 import asyncio
+import os
+import sys
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
+
+# ─── Absolute-path resolution ────────────────────────────────────
+# When installed via install.sh, BBAT_BASE_DIR is set by /usr/local/bin/bbat.
+# When run standalone via `python tui.py`, fall back to __file__.
+BASE_DIR = os.environ.get("BBAT_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
+MODULES_DIR = os.path.join(BASE_DIR, "modules")
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if MODULES_DIR not in sys.path:
+    sys.path.insert(0, MODULES_DIR)
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -23,18 +35,10 @@ from textual.css.query import NoMatches
 # DRACULA THEME COLOR CONSTANTS
 # ═══════════════════════════════════════════════════════════════════
 DRACULA = {
-    "bg":        "#21222c",
-    "fg":        "#f8f8f2",
-    "comment":   "#6272a4",
-    "cyan":      "#8be9fd",
-    "green":     "#50fa7b",
-    "orange":    "#ffb86c",
-    "pink":      "#ff79c6",
-    "purple":    "#bd93f9",
-    "red":       "#ff5555",
-    "yellow":    "#f1fa8c",
-    "dark":      "#282a36",
-    "row_alt":   "#44475a",
+    "bg":        "#21222c", "fg":        "#f8f8f2", "comment":   "#6272a4",
+    "cyan":      "#8be9fd", "green":     "#50fa7b", "orange":    "#ffb86c",
+    "pink":      "#ff79c6", "purple":    "#bd93f9", "red":       "#ff5555",
+    "yellow":    "#f1fa8c", "dark":      "#282a36", "row_alt":   "#44475a",
 }
 
 BBAT_LOGO = """
@@ -44,7 +48,7 @@ BBAT_LOGO = """
 ┃┃┃┃┃┃┃┗━┛┃  ┃┃
 ┃┃┃┃┃┃┃┏━┓┃  ┃┃
 ┗┛┗┛┗┛┗┛ ┗┛  ┗┛
- Bug Bounty Automation Toolkit v3.1.0 — Dracula Edition
+ Bug Bounty Automation Toolkit v3.2.0 — Dracula Edition
 """.strip()
 
 # ═══════════════════════════════════════════════════════════════════
@@ -73,7 +77,7 @@ MODULES = [
 class ModuleTask:
     name: str
     label: str
-    status: str = "pending"   # pending | running | completed | error
+    status: str = "pending"
     results: list = field(default_factory=list)
 
 
@@ -91,49 +95,34 @@ class ScanOrchestrator:
 
     # ─── Main Execution Loop ────────────────────────────────────────
     async def run(self):
-        total = len(self.selected)
-        done = 0
-
+        total = len(self.selected); done = 0
         self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
         self.app.log_line(f"[purple]🎯  TARGET  → {self.target}[/purple]")
         self.app.log_line(f"[purple]📦  MODULES → {len(self.selected)} selected[/purple]")
         self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
-
         for mod_key in self.selected:
             if self._stop:
-                self.app.log_line("[yellow]⚠  Scan interrupted by user.[/yellow]")
-                break
-
-            task = self.tasks[mod_key]
-            task.status = "running"
+                self.app.log_line("[red]⚠  Interrupted by user.[/red]"); break
+            task = self.tasks[mod_key]; task.status = "running"
             self.app.update_module_status(mod_key, "[yellow]RUNNING[/yellow]")
             self.app.log_line(f"[cyan]▶ {task.label} ...[/cyan]")
-
             try:
                 result = await self._dispatch(mod_key)
                 task.results = [result] if not isinstance(result, list) else result
                 task.status = "completed"
                 self.app.update_module_status(mod_key, "[green]COMPLETED[/green]")
                 self.app.log_line(f"[green]✔ {task.label} done[/green]")
-
-                # Stream findings into the summary table
                 if isinstance(result, dict) and result.get("findings"):
                     for f in result["findings"]:
                         self.app.add_finding(f)
                         sev = f.get("severity", "info")
                         color = "red" if sev == "critical" else "orange" if sev == "high" else "yellow"
-                        self.app.log_line(
-                            f"  [{color}]{sev.upper():8} {f.get('type')}: {f.get('description','')[:70]}[/]",
-                        )
-
+                        self.app.log_line(f"  [{color}]{sev.upper():8} {f.get('type')}: {f.get('description','')[:70]}[/]")
             except Exception as exc:
                 task.status = "error"
                 self.app.update_module_status(mod_key, "[red]ERROR[/red]")
                 self.app.log_line(f"[red]✘ {task.label} failed: {exc}[/red]")
-
-            done += 1
-            self.app.update_progress(done / total)
-
+            done += 1; self.app.update_progress(done / total)
         self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
         self.app.log_line("[green]✔ Session finished.[/green]")
         self.app.switch_tab("summary")
@@ -141,15 +130,19 @@ class ScanOrchestrator:
     def stop(self):
         self._stop = True
 
-    # ─── Module Dispatcher ───────────────────────────────────────────
+    # ─── Module Dispatcher (absolute paths) ───────────────────────────
     async def _dispatch(self, mod_key: str):
-        import sys; sys.path.insert(0, "modules")
         from utils import load_config
-        config = load_config("config.json")
+        config_path = os.path.join(BASE_DIR, "config.json")
+        config = load_config(config_path)
+        config.setdefault("recon", {})
+        config["recon"]["wordlist"] = config["recon"].get("wordlist",
+            os.path.join(BASE_DIR, "wordlists", "common.txt"))
 
         if mod_key == "recon":
             from recon import ReconModule; m = ReconModule(config)
-            return {"subdomains": m.enumerate_subdomains(self.target), "dns_records": m.resolve_dns(self.target),
+            return {"subdomains": m.enumerate_subdomains(self.target),
+                    "dns_records": m.resolve_dns(self.target),
                     "port_scan": m.port_scan(self.target), "whois": m.whois_lookup(self.target)}
 
         if mod_key == "ctlog":
@@ -233,7 +226,6 @@ class BBATApp(App):
         Binding("ctrl+k", "stop_scan", "Stop Scan", show=True),
     ]
 
-    # Reactive state
     progress_value: reactive[float] = reactive(0.0)
     findings_list: reactive[list] = reactive([], layout=False)
 
@@ -245,10 +237,10 @@ class BBATApp(App):
     # ─── Compose ───────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(BBAT_LOGO, id="logo", classes="header-box logo")
-        yield Static("Bug Bounty Automation Toolkit v3.1.0 — Dracula Edition", classes="subtitle")
+        yield Static("Bug Bounty Automation Toolkit v3.2.0 — Dracula Edition", classes="subtitle")
 
         with Horizontal():
-            # ── Sidebar ──
+            # Sidebar
             with Vertical(id="sidebar"):
                 yield Label("[bold #bd93f9]Target[/]", id="target-label")
                 yield Input(placeholder="example.com  |  https://target.com", id="target-input")
@@ -263,38 +255,32 @@ class BBATApp(App):
                 yield Static("")
                 yield Label("[bold #6272a4]Shortcuts[/]")
                 yield Label("[cyan]Ctrl+S[/] Save Report")
-                yield Label("[red]Ctrl+C[/]  Stop Scan")
+                yield Label("[red]Ctrl+K[/]  Stop Scan")
                 yield Label("[yellow]Ctrl+Q[/] Quit")
 
-            # ── Main Area ──
+            # Main area
             with Vertical(id="main-content"):
                 yield Label("[bold #bd93f9]Module Status[/]", id="status-label")
                 yield DataTable(id="status-table", zebra_stripes=True)
-
                 with TabbedContent("Live Log", "Summary", id="tabbed-content"):
                     with TabPane("Live Log", id="tab-live-log"):
                         yield RichLog(id="live-log", auto_scroll=True, wrap=True)
                     with TabPane("Summary", id="tab-summary"):
                         yield DataTable(id="summary-table", zebra_stripes=True)
-
                 yield ProgressBar(id="progress", total=1.0, show_eta=False)
 
         yield Footer()
 
     # ─── Mount ─────────────────────────────────────────────────────
     def on_mount(self):
-        # Status table
         st = self.query_one("#status-table", DataTable)
         st.add_columns("Module", "Status", "Results")
         for key, label, _ in MODULES:
             st.add_row(label, "⏳ Pending", "—", key=key)
-
-        # Summary table
         su = self.query_one("#summary-table", DataTable)
         su.add_columns("Severity", "Type", "Description", "URL")
-
         self.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
-        self.log_line("[green]  Welcome to BBAT TUI v3.1.0[/green]")
+        self.log_line("[green]  Welcome to BBAT TUI v3.2.0[/green]")
         self.log_line("[cyan]  Enter target → select modules → EXECUTE[/cyan]")
         self.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
 
@@ -305,32 +291,26 @@ class BBATApp(App):
         elif event.button.id == "stop-btn":
             self.action_stop_scan()
 
-    # ─── Actions ─────────────────────────────────────────────────────
+    # ─── Actions ────────────────────────────────────────────────────
     def action_start_scan(self):
         inp = self.query_one("#target-input", Input)
         target = inp.value.strip()
         if not target:
             self.log_line("[red]✘  Please enter a target domain/URL.[/red]"); return
-
         selected: List[str] = []
         for key, _, _ in MODULES:
             if self.query_one(f"#chk-{key}", Checkbox).value:
                 selected.append(key)
         if not selected:
             self.log_line("[red]✘  No modules selected.[/red]"); return
-
-        # Reset state
         self.query_one("#summary-table", DataTable).clear()
         self.findings_list.clear()
         self.update_progress(0.0)
         self.switch_tab("log")
-
-        # Reset status table
         st = self.query_one("#status-table", DataTable)
         for key, _, _ in MODULES:
             st.update_cell(key, "Status", "⏳ Pending")
             st.update_cell(key, "Results", "—")
-
         self.orchestrator = ScanOrchestrator(target, selected, self)
         self.scan_task = asyncio.create_task(self.orchestrator.run())
         self.log_line(f"[cyan]▶ Launching {len(selected)} modules against [bold]{target}[/bold] ...[/cyan]")
@@ -345,7 +325,7 @@ class BBATApp(App):
     def action_save_report(self):
         import os, json
         from datetime import datetime
-        from modules.utils import save_results
+        from utils import save_results
         os.makedirs("./output", exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         report = {
@@ -357,7 +337,7 @@ class BBATApp(App):
         save_results(report, path)
         self.log_line(f"[green]📄  Report saved → {path}[/green]")
 
-    # ─── UI Bridges (direct call — same event loop) ────────────────
+    # ─── UI Bridges ────────────────────────────────────────────────
     def log_line(self, line: str):
         self.query_one("#live-log", RichLog).write(line)
 
@@ -380,8 +360,7 @@ class BBATApp(App):
         )
 
     def switch_tab(self, tab_name: str):
-        tc = self.query_one("#tabbed-content", TabbedContent)
-        tc.active = f"tab-{tab_name}"
+        self.query_one("#tabbed-content", TabbedContent).active = f"tab-{tab_name}"
 
     @staticmethod
     def _sev_color(sev: str) -> str:
