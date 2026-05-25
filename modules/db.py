@@ -5,6 +5,7 @@ Handles large-scale scan data without memory crashes.
 
 import sqlite3
 import json
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
