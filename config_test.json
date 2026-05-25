@@ -1,0 +1,39 @@
+{
+  "description": "Test configuration – minimal limits for smoke testing",
+  "project": {
+    "name": "BugBountyToolkit",
+    "version": "1.0.0",
+    "author": "Security Researcher",
+    "output_dir": "./output"
+  },
+  "recon": {
+    "wordlist": "./wordlists/test.txt",
+    "threads": 50,
+    "timeout": 2,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "resolvers": ["8.8.8.8", "1.1.1.1"],
+    "port_scan": {
+      "top_ports": 5,
+      "rate_limit": 1000
+    }
+  },
+  "scanner": {
+    "templates_dir": "./templates",
+    "severity_levels": ["critical", "high", "medium", "low", "info"]
+  },
+  "fuzzer": {
+    "extensions": ["txt", "bak"],
+    "methods": ["GET"],
+    "threads": 10
+  },
+  "crawler": {
+    "max_depth": 1,
+    "max_pages": 5,
+    "same_domain_only": true,
+    "respect_robots": true
+  },
+  "reporting": {
+    "formats": ["json", "markdown"],
+    "auto_save": true
+  }
+}
