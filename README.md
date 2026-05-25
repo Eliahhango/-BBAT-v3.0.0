@@ -1,4 +1,4 @@
-# 🐛 BBAT - Bug Bounty Automation Toolkit v3.2.0
+# 🐛 BBAT - Bug Bounty Automation Toolkit v3.3.0
 
 **One-line installer:**
 
@@ -12,48 +12,44 @@ curl -sSL https://raw.githubusercontent.com/Eliahhango/-BBAT-v3.0.0/main/install
 bbat
 ```
 
-That's it. The Dracula-themed TUI launches instantly.
+The operator-grade TUI launches instantly. True-black background, neon purple accent, minimal chrome.
 
 ---
 
-## 🚀 Quick Start
+## 🎮 TUI Interface v3.3.0
 
-```bash
-# 1. Install (one command)
-curl -sSL https://raw.githubusercontent.com/Eliahhango/-BBAT-v3.0.0/main/install.sh | bash
-
-# 2. Launch TUI
-bbat
-
-# 3. Or use CLI mode for automation
-bbat full example.com
-bbat recon example.com
-bbat scan https://example.com
 ```
+ ▄▄▄▄    ▄▄▄      ▄▄▄      ▄███▄   █▄▄▄▄
+ ...
+ Welcome, operator.
+ Syntax: target.com,module1,module2  (or 'all')
+ Modules: recon, ctlog, crawler, fuzzer, scanner, takeover, s3, gitscan, fingerprint, waf, api_fuzz, screenshot
 
-**Repository:** https://github.com/Eliahhango/-BBAT-v3.0.0
+ example.com,recon,waf,scanner  —  press ENTER to execute
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ [live log — 90% of screen]
 
----
+ ┏ ALERT: CRITICAL
+ ┃ TYPE: open_redirect
+ ┃ DESC: Open redirect found at ...
+ ┃ URL:  https://example.com/redirect?url=...
+ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## 🎨 TUI Interface
+ ctrl+s save | ctrl+c abort | ctrl+q quit
+```
 
 | Key | Action |
 |-----|--------|
+| `Enter` | Execute command in the input bar |
 | `Ctrl+S` | Save report to JSON |
-| `Ctrl+K` | Stop running scan |
+| `Ctrl+C` | Abort running scan |
 | `Ctrl+Q` | Quit BBAT |
-
-The TUI features:
-- Dracula color theme
-- Module selector with checkboxes
-- Live log with color-coded output
-- Dynamic findings table
-- Global progress bar
-- Side-panel module status tracker
 
 ---
 
-## 🎮 CLI Reference
+## 🛠 CLI Reference
+
+All commands work via `bbat <command> <target>`:
 
 ```bash
 bbat recon        example.com
@@ -78,21 +74,12 @@ bbat dashboard    # Flask web dashboard
 ## 📦 What Gets Installed
 
 ```
-~/.bbat/venv     → Python virtual environment (hidden, isolated)
+~/.bbat/venv     → Hidden Python environment (isolated)
 ~/.bbat/src      → BBAT source code synced from GitHub
-/usr/local/bin/bbat → Global launcher (requires sudo)
+/usr/local/bin/bbat → Global launcher (sudo required)
 ```
 
-No manual `pip install`, no `cd` into folders, no local file management.
-
----
-
-## 🚢 Docker (optional)
-
-```bash
-docker build -t bbat .
-docker run --rm -p 5000:5000 bbat dashboard
-```
+No manual pip install, no cd into folders, no local file management. Pure seamless operator experience.
 
 ---
 
@@ -108,6 +95,6 @@ MIT License
 
 ---
 
-**BBAT v3.2.0** — Built for authorized security research.
+**BBAT v3.3.0** — Operator-grade security research.
 
 **GitHub:** https://github.com/Eliahhango/-BBAT-v3.0.0

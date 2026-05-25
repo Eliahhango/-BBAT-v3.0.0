@@ -1,78 +1,53 @@
 """
-BBAT TUI — Professional Terminal User Interface
-Textual + Rich powered interface for BBAT v3.2.0
-Launch: bbat  (after install.sh)  OR  python tui.py
+BBAT TUI v3.3.0 — Operator-Grade Command Interface
+OpenClaw-inspired: True-black, command-centric, minimal chrome.
+Launch: bbat
 """
 
 import asyncio
 import os
 import sys
-from typing import List, Dict, Any
+from typing import List, Dict
 from dataclasses import dataclass, field
 
-# ─── Absolute-path resolution ────────────────────────────────────
-# When installed via install.sh, BBAT_BASE_DIR is set by /usr/local/bin/bbat.
-# When run standalone via `python tui.py`, fall back to __file__.
 BASE_DIR = os.environ.get("BBAT_BASE_DIR", os.path.dirname(os.path.abspath(__file__)))
 MODULES_DIR = os.path.join(BASE_DIR, "modules")
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-if MODULES_DIR not in sys.path:
-    sys.path.insert(0, MODULES_DIR)
+if BASE_DIR not in sys.path:     sys.path.insert(0, BASE_DIR)
+if MODULES_DIR not in sys.path:  sys.path.insert(0, MODULES_DIR)
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import (
-    Input, Button, Checkbox, Static,
-    DataTable, RichLog, ProgressBar,
-    TabbedContent, TabPane, Footer, Label,
-)
+from textual.containers import Container, Vertical
+from textual.widgets import Input, Static, RichLog, ProgressBar
 from textual.binding import Binding
 from textual.reactive import reactive
-from textual.css.query import NoMatches
 
-# ═══════════════════════════════════════════════════════════════════
-# DRACULA THEME COLOR CONSTANTS
-# ═══════════════════════════════════════════════════════════════════
-DRACULA = {
-    "bg":        "#21222c", "fg":        "#f8f8f2", "comment":   "#6272a4",
-    "cyan":      "#8be9fd", "green":     "#50fa7b", "orange":    "#ffb86c",
-    "pink":      "#ff79c6", "purple":    "#bd93f9", "red":       "#ff5555",
-    "yellow":    "#f1fa8c", "dark":      "#282a36", "row_alt":   "#44475a",
+THEME = {
+    "bg":       "#000000", "fg":       "#E0E0E0", "accent":   "#B388FF",
+    "success":  "#00E676", "warn":     "#FFEA00", "err":      "#FF1744",
+    "dim":      "#424242", "border":   "#212121",
 }
 
-BBAT_LOGO = """
-┏━┓┏━┓┏━━━┓┏━━━━┓
-┃ ┗┛ ┃┃┏━┓┃┃┏┓┏┓┃
-┃┏┓┏┓┃┃┃ ┃┃┗┛┃┃┗┛
-┃┃┃┃┃┃┃┗━┛┃  ┃┃
-┃┃┃┃┃┃┃┏━┓┃  ┃┃
-┗┛┗┛┗┛┗┛ ┗┛  ┗┛
- Bug Bounty Automation Toolkit v3.2.0 — Dracula Edition
-""".strip()
+BANNER = """[bold #B388FF]
+ ▄▄▄▄    ▄▄▄      ▄▄▄      ▄███▄   █▄▄▄▄
+█   ▀▄   █▄▀ ▀▄   █   █   █▀   ▀  █  ▄▀
+▀▄▄    ▄  █   █   █▀▀▀▀   ██▄▄    █▀▀
+    ▀▀ █  ███▀    █      █▄   ▄▀ █
+▀▄▄▄▄▀   █        █       ▀███▀   █
+         ▀                        ▀
+         [dim]Bug Bounty Automation Toolkit v3.3.0[/dim]
+[/bold #B388FF]"""
 
-# ═══════════════════════════════════════════════════════════════════
-# MODULE REGISTRY
-# ═══════════════════════════════════════════════════════════════════
-MODULES = [
-    ("recon",       "Reconnaissance",         True),
-    ("ctlog",       "CT Log Enum",            True),
-    ("crawler",     "Web Crawler",            True),
-    ("fuzzer",      "Directory Fuzzer",       True),
-    ("scanner",     "Vulnerability Scanner",  True),
-    ("takeover",    "Subdomain Takeover",     True),
-    ("s3",          "S3 Bucket Scan",         False),
-    ("gitscan",     "Git/SVN Exposure",       False),
-    ("fingerprint", "Tech Fingerprint",       True),
-    ("waf",         "WAF Detection",          False),
-    ("api_fuzz",    "API Fuzzer",             False),
-    ("screenshot",  "Screenshot Capture",     False),
-]
+MODULE_MAP = {
+    "recon": "Reconnaissance", "ctlog": "CT Log Enum",
+    "crawler": "Web Crawler", "fuzzer": "Directory Fuzzer",
+    "scanner": "Vulnerability Scanner", "takeover": "Subdomain Takeover",
+    "s3": "S3 Bucket Scan", "gitscan": "Git/SVN Exposure",
+    "fingerprint": "Tech Fingerprint", "waf": "WAF Detection",
+    "api_fuzz": "API Fuzzer", "screenshot": "Screenshot Capture",
+    "all": "All Modules",
+}
 
 
-# ═══════════════════════════════════════════════════════════════════
-# SCAN ORCHESTRATOR (async bridge into BBAT modules)
-# ═══════════════════════════════════════════════════════════════════
 @dataclass
 class ModuleTask:
     name: str
@@ -82,59 +57,52 @@ class ModuleTask:
 
 
 class ScanOrchestrator:
-    """Executes BBAT modules asynchronously while streaming to the TUI."""
+    """Executes BBAT modules asynchronously."""
 
     def __init__(self, target: str, selected: List[str], app: "BBATApp"):
         self.target = target
         self.selected = selected
         self.app = app
-        self.tasks: Dict[str, ModuleTask] = {
-            m[0]: ModuleTask(m[0], m[1]) for m in MODULES
-        }
+        self.tasks = {key: ModuleTask(key, MODULE_MAP.get(key, key))
+                      for key in MODULE_MAP if key != "all"}
         self._stop = False
 
-    # ─── Main Execution Loop ────────────────────────────────────────
     async def run(self):
         total = len(self.selected); done = 0
-        self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
-        self.app.log_line(f"[purple]🎯  TARGET  → {self.target}[/purple]")
-        self.app.log_line(f"[purple]📦  MODULES → {len(self.selected)} selected[/purple]")
-        self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
+        self.app.emit("[bold #B388FF]━" * 40 + "[/]")
+        self.app.emit(f"[bold #B388FF]▶ TARGET  {self.target}[/]")
+        self.app.emit(f"[bold #B388FF]▶ MODULES {', '.join(self.selected)}[/]")
+        self.app.emit("[bold #B388FF]━" * 40 + "[/]")
+
         for mod_key in self.selected:
             if self._stop:
-                self.app.log_line("[red]⚠  Interrupted by user.[/red]"); break
+                self.app.alert("[bold #FF1744]⏹ ABORTED BY OPERATOR[/]")
+                break
             task = self.tasks[mod_key]; task.status = "running"
-            self.app.update_module_status(mod_key, "[yellow]RUNNING[/yellow]")
-            self.app.log_line(f"[cyan]▶ {task.label} ...[/cyan]")
+            self.app.emit(f"[bold #B388FF]▶ {task.label.upper()} ...[/]")
             try:
                 result = await self._dispatch(mod_key)
                 task.results = [result] if not isinstance(result, list) else result
                 task.status = "completed"
-                self.app.update_module_status(mod_key, "[green]COMPLETED[/green]")
-                self.app.log_line(f"[green]✔ {task.label} done[/green]")
+                self.app.emit(f"[bold #00E676]✔ {task.label} COMPLETED[/]")
                 if isinstance(result, dict) and result.get("findings"):
                     for f in result["findings"]:
-                        self.app.add_finding(f)
-                        sev = f.get("severity", "info")
-                        color = "red" if sev == "critical" else "orange" if sev == "high" else "yellow"
-                        self.app.log_line(f"  [{color}]{sev.upper():8} {f.get('type')}: {f.get('description','')[:70]}[/]")
+                        self.app.card(f)
             except Exception as exc:
                 task.status = "error"
-                self.app.update_module_status(mod_key, "[red]ERROR[/red]")
-                self.app.log_line(f"[red]✘ {task.label} failed: {exc}[/red]")
+                self.app.alert(f"[bold #FF1744]✘ {task.label} FAILED: {exc}[/]")
             done += 1; self.app.update_progress(done / total)
-        self.app.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
-        self.app.log_line("[green]✔ Session finished.[/green]")
-        self.app.switch_tab("summary")
+
+        self.app.emit("[bold #B388FF]━" * 40 + "[/]")
+        self.app.emit("[bold #00E676]✔ SESSION COMPLETE[/]")
+        self.app.show_cmd()
 
     def stop(self):
         self._stop = True
 
-    # ─── Module Dispatcher (absolute paths) ───────────────────────────
     async def _dispatch(self, mod_key: str):
         from utils import load_config
-        config_path = os.path.join(BASE_DIR, "config.json")
-        config = load_config(config_path)
+        config = load_config(os.path.join(BASE_DIR, "config.json"))
         config.setdefault("recon", {})
         config["recon"]["wordlist"] = config["recon"].get("wordlist",
             os.path.join(BASE_DIR, "wordlists", "common.txt"))
@@ -143,233 +111,174 @@ class ScanOrchestrator:
             from recon import ReconModule; m = ReconModule(config)
             return {"subdomains": m.enumerate_subdomains(self.target),
                     "dns_records": m.resolve_dns(self.target),
-                    "port_scan": m.port_scan(self.target), "whois": m.whois_lookup(self.target)}
-
+                    "port_scan": m.port_scan(self.target),
+                    "whois": m.whois_lookup(self.target)}
         if mod_key == "ctlog":
             from ctlog import CTLogModule; m = CTLogModule(config)
             return {"subdomains": m.fetch_subdomains(self.target)}
-
         if mod_key == "crawler":
             from crawler import CrawlerModule; m = CrawlerModule(config)
             return m.crawl(self.target)
-
         if mod_key == "fuzzer":
             from fuzzer import FuzzerModule; m = FuzzerModule(config)
             return m.fuzz(self.target)
-
         if mod_key == "scanner":
             from scanner import ScannerModule; m = ScannerModule(config)
             return m.scan(self.target)
-
         if mod_key == "takeover":
             from takeover import TakeoverModule; from recon import ReconModule
             rm = ReconModule(config); m = TakeoverModule(config)
-            subs = rm.enumerate_subdomains(self.target)
-            return m.check_subdomains([s["subdomain"] for s in subs])
-
+            return m.check_subdomains([s["subdomain"] for s in rm.enumerate_subdomains(self.target)])
         if mod_key == "s3":
             from s3_scanner import S3ScannerModule; m = S3ScannerModule(config)
             return m.scan_domain(self.target)
-
         if mod_key == "gitscan":
             from git_scanner import GitScannerModule; m = GitScannerModule(config)
             return m.scan(self.target)
-
         if mod_key == "fingerprint":
             from fingerprint import FingerprintModule; from utils import normalize_url
-            m = FingerprintModule(config)
-            return m.analyze_urls([normalize_url(self.target)])
-
+            return FingerprintModule(config).analyze_urls([normalize_url(self.target)])
         if mod_key == "waf":
             from waf_detector import WAFDetectorModule; from utils import normalize_url
-            m = WAFDetectorModule(config)
-            return m.detect(normalize_url(self.target))
-
+            return WAFDetectorModule(config).detect(normalize_url(self.target))
         if mod_key == "api_fuzz":
             from api_fuzzer import ApiFuzzerModule; m = ApiFuzzerModule(config)
             return m.scan(self.target)
-
         if mod_key == "screenshot":
             from screenshot import ScreenshotModule; m = ScreenshotModule(config)
             return m.capture_batch([f"http://{self.target}"])
-
         return {}
 
 
-# ═══════════════════════════════════════════════════════════════════
-# TUI APPLICATION
-# ═══════════════════════════════════════════════════════════════════
 class BBATApp(App):
-    """Professional Textual TUI for BBAT."""
+    """OpenClaw-inspired command-terminal interface."""
 
     CSS = """
-    Screen { background: #21222c; color: #f8f8f2; }
-    .header-box { height: 8; content-align: center middle; }
-    .logo { color: #50fa7b; text-style: bold; }
-    .subtitle { text-align: center; color: #bd93f9; padding-bottom: 1; }
-    #sidebar { width: 30; background: #282a36; border-right: solid #6272a4; }
-    #target-input { border: solid #bd93f9; margin: 1 2; }
-    #execute-btn { background: #50fa7b; color: #21222c; }
-    #stop-btn  { background: #ff5555; color: #f8f8f2; }
-    #module-grid { grid-size: 3; grid-gutter: 1; height: auto; margin: 0 2; }
-    #module-grid Checkbox { color: #8be9fd; }
-    #progress { height: 1; color: #50fa7b; margin: 1 2; }
-    #live-log { background: #282a36; border: solid #6272a4; }
-    #summary-table { background: #282a36; border: solid #6272a4; }
-    DataTable .datatable--header { background: #44475a; color: #f8f8f2; }
-    DataTable .datatable--cursor { background: #bd93f9; }
+    Screen { background: #000000; color: #E0E0E0; }
+    .banner { text-align: center; padding-top: 1; }
+    .cmd-bar { dock: top; height: 3; }
+    #cmd-input { border: none; background: #000000; color: #B388FF; content-align: left middle; }
+    #cmd-input:focus { border-bottom: solid #B388FF; }
+    .divider { color: #212121; text-align: center; }
+    #live-log { background: #000000; border: none; padding: 1; }
+    #progress { height: 8px; background: transparent; margin: 0 2; }
+    #progress > .bar { background: #B388FF; }
+    #status-strip { height: 1; background: #000000; color: #424242; content-align: center middle; }
     """
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
-        Binding("ctrl+s", "save_report", "Save Report", show=True),
-        Binding("ctrl+k", "stop_scan", "Stop Scan", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+        Binding("ctrl+c", "abort", "Abort", show=True),
     ]
 
     progress_value: reactive[float] = reactive(0.0)
-    findings_list: reactive[list] = reactive([], layout=False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.orchestrator: ScanOrchestrator | None = None
         self.scan_task: asyncio.Task | None = None
+        self._scanning = False
 
-    # ─── Compose ───────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Static(BBAT_LOGO, id="logo", classes="header-box logo")
-        yield Static("Bug Bounty Automation Toolkit v3.2.0 — Dracula Edition", classes="subtitle")
+        yield Static(BANNER, id="banner", classes="banner")
+        yield Static("[dim]example.com,recon,waf,scanner  |  example.com,all[/dim]", id="hint", classes="divider")
+        yield Input(placeholder="target.com,recon,scanner  —  press ENTER to execute", id="cmd-input", classes="cmd-bar")
+        yield Static("━" * 80, classes="divider")
+        yield RichLog(id="live-log", auto_scroll=True, wrap=True)
+        yield ProgressBar(id="progress", total=1.0, show_eta=False, show_percentage=False)
+        yield Static("bbat v3.3.0  |  ctrl+s save  |  ctrl+c abort  |  ctrl+q quit", id="status-strip")
 
-        with Horizontal():
-            # Sidebar
-            with Vertical(id="sidebar"):
-                yield Label("[bold #bd93f9]Target[/]", id="target-label")
-                yield Input(placeholder="example.com  |  https://target.com", id="target-input")
-                yield Static("")
-                yield Label("[bold #bd93f9]Module Selector[/]", id="modules-label")
-                with Horizontal(id="module-grid"):
-                    for key, label, default in MODULES:
-                        yield Checkbox(label, value=default, id=f"chk-{key}")
-                yield Static("")
-                yield Button("▶  Execute Scan", id="execute-btn", variant="success")
-                yield Button("⏹  Stop Scan",  id="stop-btn",  variant="error")
-                yield Static("")
-                yield Label("[bold #6272a4]Shortcuts[/]")
-                yield Label("[cyan]Ctrl+S[/] Save Report")
-                yield Label("[red]Ctrl+K[/]  Stop Scan")
-                yield Label("[yellow]Ctrl+Q[/] Quit")
-
-            # Main area
-            with Vertical(id="main-content"):
-                yield Label("[bold #bd93f9]Module Status[/]", id="status-label")
-                yield DataTable(id="status-table", zebra_stripes=True)
-                with TabbedContent("Live Log", "Summary", id="tabbed-content"):
-                    with TabPane("Live Log", id="tab-live-log"):
-                        yield RichLog(id="live-log", auto_scroll=True, wrap=True)
-                    with TabPane("Summary", id="tab-summary"):
-                        yield DataTable(id="summary-table", zebra_stripes=True)
-                yield ProgressBar(id="progress", total=1.0, show_eta=False)
-
-        yield Footer()
-
-    # ─── Mount ─────────────────────────────────────────────────────
     def on_mount(self):
-        st = self.query_one("#status-table", DataTable)
-        st.add_columns("Module", "Status", "Results")
-        for key, label, _ in MODULES:
-            st.add_row(label, "⏳ Pending", "—", key=key)
-        su = self.query_one("#summary-table", DataTable)
-        su.add_columns("Severity", "Type", "Description", "URL")
-        self.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
-        self.log_line("[green]  Welcome to BBAT TUI v3.2.0[/green]")
-        self.log_line("[cyan]  Enter target → select modules → EXECUTE[/cyan]")
-        self.log_line("[purple]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/purple]")
+        self._welcome()
+        self.query_one("#cmd-input", Input).focus()
 
-    # ─── Events ────────────────────────────────────────────────────
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "execute-btn":
-            self.action_start_scan()
-        elif event.button.id == "stop-btn":
-            self.action_stop_scan()
+    def _welcome(self):
+        self.emit("[bold #B388FF]Welcome, operator.[/]")
+        self.emit("[dim]Syntax: target.com,module1,module2  (or 'all')[/dim]")
+        self.emit("[dim]Modules:[/dim] " + ", ".join([f"[bold #B388FF]{k}[/]" for k in list(MODULE_MAP.keys())[:-1]]))
+        self.emit("")
 
-    # ─── Actions ────────────────────────────────────────────────────
-    def action_start_scan(self):
-        inp = self.query_one("#target-input", Input)
-        target = inp.value.strip()
-        if not target:
-            self.log_line("[red]✘  Please enter a target domain/URL.[/red]"); return
-        selected: List[str] = []
-        for key, _, _ in MODULES:
-            if self.query_one(f"#chk-{key}", Checkbox).value:
-                selected.append(key)
+    # ── ENTER → Execute ──
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if not self._scanning:
+            self._parse_and_run(event.value)
+
+    def _parse_and_run(self, raw: str):
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if not parts:
+            self.alert("[bold #FF1744]✘ No input[/]"); return
+
+        target = parts[0]
+        selected = parts[1:]
+        if "all" in selected:
+            selected = [k for k in MODULE_MAP if k != "all"]
         if not selected:
-            self.log_line("[red]✘  No modules selected.[/red]"); return
-        self.query_one("#summary-table", DataTable).clear()
-        self.findings_list.clear()
-        self.update_progress(0.0)
-        self.switch_tab("log")
-        st = self.query_one("#status-table", DataTable)
-        for key, _, _ in MODULES:
-            st.update_cell(key, "Status", "⏳ Pending")
-            st.update_cell(key, "Results", "—")
+            selected = ["recon", "scanner", "fuzzer", "takeover"]
+
+        invalid = [s for s in selected if s not in MODULE_MAP]
+        if invalid:
+            self.alert(f"[bold #FF1744]✘ Unknown: {', '.join(invalid)}[/]"); return
+
+        self._launch(target, selected)
+
+    def _launch(self, target: str, selected: List[str]):
+        self._scanning = True
+        inp = self.query_one("#cmd-input", Input)
+        inp.disabled = True
+        inp.placeholder = "SCANNING...  (ctrl+c to abort)"
+        self.query_one("#progress", ProgressBar).update(progress=0.0)
         self.orchestrator = ScanOrchestrator(target, selected, self)
         self.scan_task = asyncio.create_task(self.orchestrator.run())
-        self.log_line(f"[cyan]▶ Launching {len(selected)} modules against [bold]{target}[/bold] ...[/cyan]")
 
-    def action_stop_scan(self):
+    def action_abort(self):
         if self.orchestrator:
             self.orchestrator.stop()
-            self.log_line("[yellow]⚠  Stop requested.[/yellow]")
         if self.scan_task and not self.scan_task.done():
             self.scan_task.cancel()
+        self._scanning = False
+        self.show_cmd()
+        self.alert("[bold #FFEA00]⏹ ABORTED[/]")
 
-    def action_save_report(self):
-        import os, json
-        from datetime import datetime
-        from utils import save_results
+    def action_save(self):
+        import os; from datetime import datetime; from utils import save_results
         os.makedirs("./output", exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        report = {
-            "timestamp": f"{ts}Z",
-            "target": self.orchestrator.target if self.orchestrator else "N/A",
-            "findings": self.findings_list,
-        }
-        path = f"./output/tui_report_{ts}.json"
+        report = {"timestamp": f"{ts}Z", "target": self.orchestrator.target if self.orchestrator else "N/A"}
+        path = f"./output/bbat_{ts}.json"
         save_results(report, path)
-        self.log_line(f"[green]📄  Report saved → {path}[/green]")
+        self.emit(f"[bold #00E676]📄 SAVED → {path}[/]")
 
-    # ─── UI Bridges ────────────────────────────────────────────────
-    def log_line(self, line: str):
+    # ── UI Bridges ──
+    def emit(self, line: str):
         self.query_one("#live-log", RichLog).write(line)
-
-    def update_module_status(self, key: str, status_text: str):
-        try:
-            self.query_one("#status-table", DataTable).update_cell(key, "Status", status_text)
-        except NoMatches:
-            pass
 
     def update_progress(self, value: float):
         self.query_one("#progress", ProgressBar).update(progress=value)
 
-    def add_finding(self, finding: Dict):
-        self.findings_list.append(finding)
-        self.query_one("#summary-table", DataTable).add_row(
-            f"[bold {self._sev_color(finding.get('severity','info'))}]{finding.get('severity','info').upper()}[/]",
-            finding.get("type", "N/A"),
-            (finding.get("description", "")[:55] + "...") if len(finding.get("description", "")) > 55 else finding.get("description", ""),
-            finding.get("url", ""),
+    def alert(self, line: str):
+        self.emit(line)
+
+    def card(self, finding: Dict):
+        sev = finding.get("severity", "info")
+        desc = finding.get("description", "")
+        url = finding.get("url", "")
+        color = {"critical":"#FF1744","high":"#FFEA00","medium":"#B388FF","low":"#00E676","info":"#E0E0E0"}.get(sev, "#E0E0E0")
+        self.emit(
+            f"[bold {color}]┏ ALERT: {sev.upper()}[/bold {color}]\n"
+            f"[bold {color}]┃ TYPE: {finding.get('type','N/A')}[/bold {color}]\n"
+            f"[bold {color}]┃ DESC: {desc[:90]}{'...' if len(desc)>90 else ''}[/bold {color}]\n"
+            f"[bold {color}]┃ URL:  {url}[/bold {color}]\n"
+            f"[bold {color}]┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold {color}]"
         )
 
-    def switch_tab(self, tab_name: str):
-        self.query_one("#tabbed-content", TabbedContent).active = f"tab-{tab_name}"
+    def show_cmd(self):
+        self._scanning = False
+        inp = self.query_one("#cmd-input", Input)
+        inp.disabled = False; inp.value = ""
+        inp.placeholder = "target.com,recon,scanner  —  press ENTER to execute"
+        inp.focus()
 
-    @staticmethod
-    def _sev_color(sev: str) -> str:
-        return {"critical":"red","high":"orange","medium":"yellow","low":"green","info":"comment"}.get(sev, "white")
 
-
-# ═══════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    app = BBATApp()
-    app.run()
+    BBATApp().run()
