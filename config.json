@@ -1,9 +1,9 @@
 {
-  "description": "BBAT default configuration",
+  "description": "BBAT default configuration v3.1",
   "project": {
     "name": "BugBountyToolkit",
-    "version": "3.0.0",
-    "author": "Security Researcher",
+    "version": "3.1.0",
+    "author": "Red-Team Engineer",
     "output_dir": "./output"
   },
   "recon": {
@@ -11,95 +11,46 @@
     "threads": 50,
     "timeout": 10,
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "resolvers": ["8.8.8.8", "1.1.1.1"],
-    "port_scan": {
-      "top_ports": 1000,
-      "rate_limit": 1000
-    }
+    "ssl_verify": false,
+    "resolvers": [ "8.8.8.8", "1.1.1.1" ],
+    "port_scan": { "top_ports": 1000, "rate_limit": 1000 }
   },
   "scanner": {
     "templates_dir": "./templates",
     "severity_levels": ["critical", "high", "medium", "low", "info"]
   },
-  "fuzzer": {
-    "extensions": ["txt", "bak", "old", "zip", "tar.gz"],
-    "methods": ["GET", "POST"],
-    "threads": 100
-  },
-  "crawler": {
-    "max_depth": 3,
-    "max_pages": 500,
-    "same_domain_only": true,
-    "respect_robots": true
-  },
-  "takeover": {
-    "verify": true,
-    "check_http": true
-  },
-  "js_analyzer": {
-    "max_file_size_kb": 5000,
-    "timeout": 15
-  },
-  "fingerprint": {
-    "timeout": 15,
-    "check_multiple_paths": true
-  },
-  "ctlog": {
-    "timeout": 30,
-    "include_expired": false
-  },
-  "notifier": {
-    "slack_webhook": "",
-    "discord_webhook": "",
-    "notify_on": ["high", "critical"]
-  },
-  "wayback": {
-    "timeout": 60,
-    "match_subdomains": true
-  },
-  "s3_scanner": {
-    "region": "us-east-1",
-    "timeout": 10
-  },
-  "git_scanner": {
-    "timeout": 10
-  },
-  "paramfinder": {
-    "timeout": 10,
-    "max_params_per_url": 20
-  },
+  "fuzzer": { "extensions": ["txt", "bak", "old", "zip"], "methods": ["GET", "POST"], "threads": 100 },
+  "crawler": { "max_depth": 3, "max_pages": 500, "same_domain_only": true, "respect_robots": true },
+  "takeover": { "verify": true, "check_http": true },
+  "js_analyzer": { "max_file_size_kb": 5000, "timeout": 15 },
+  "fingerprint": { "timeout": 15 },
+  "ctlog": { "timeout": 30, "include_expired": false },
+  "notifier": { "slack_webhook": "", "discord_webhook": "", "notify_on": ["high", "critical"] },
+  "wayback": { "timeout": 60, "match_subdomains": true },
+  "s3_scanner": { "region": "us-east-1", "timeout": 10 },
+  "git_scanner": { "timeout": 10 },
   "nuclei": {
     "templates_dir": "",
-    "severity": "critical,high,medium,low,info",
+    "severity": "critical,high,medium",
     "rate_limit": 150,
     "timeout": 10,
     "concurrency": 25,
     "headless": false
   },
-  "screenshot": {
-    "timeout": 30,
-    "resolution": "1920x1080",
-    "output_dir": "./output/screenshots",
-    "backend": "auto"
-  },
-  "waf_detector": {
-    "timeout": 10
-  },
-  "api_fuzzer": {
-    "timeout": 10,
-    "idor_test": true,
-    "method_fuzz": true
-  },
-  "dashboard": {
-    "host": "127.0.0.1",
-    "port": 5000
-  },
+  "screenshot": { "timeout": 30, "resolution": "1920x1080", "backend": "auto" },
+  "waf_detector": { "timeout": 10 },
+  "api_fuzzer": { "timeout": 10, "idor_test": true, "method_fuzz": true },
+  "dashboard": { "host": "127.0.0.1", "port": 5000 },
   "async_engine": {
     "concurrency": 100,
-    "timeout": 10
+    "timeout": 10,
+    "jitter_min_ms": 0,
+    "jitter_max_ms": 500,
+    "ssl_verify": false
   },
   "reporting": {
     "formats": ["json", "markdown", "html"],
+    "db_path": "./output/bbat.db",
     "auto_save": true
   }
 }

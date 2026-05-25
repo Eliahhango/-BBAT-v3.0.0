@@ -1,21 +1,22 @@
 """
 AsyncEngine module for BBAT.
-Concurrent HTTP request engine using asyncio/aiohttp for high-speed scanning.
+Concurrent HTTP request engine using httpx for high-speed scanning.
 """
 
 import asyncio
 from urllib.parse import urljoin
 from typing import List, Dict
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import random
+import time
 
 # Optional dependency
 try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
+    import httpx
+    HTTPX_AVAILABLE = True
 except ImportError:
-    AIOHTTP_AVAILABLE = False
+    HTTPX_AVAILABLE = False
+
+from modules.utils import get_random_ua
 
 
 class AsyncEngine:
@@ -24,58 +25,66 @@ class AsyncEngine:
     def __init__(self, config: dict = None):
         self.config = config or {}
         self.timeout = self.config.get("timeout", 10)
-        self.user_agent = self.config.get("user_agent", "BBAT/2.0")
         self.semaphore_limit = self.config.get("concurrency", 100)
-        self.headers = {"User-Agent": self.user_agent}
-        if AIOHTTP_AVAILABLE:
-            self._connector = aiohttp.TCPConnector(
-                limit=self.semaphore_limit * 2,
-                limit_per_host=20,
-                ssl=False,
-                enable_cleanup_closed=True,
-                force_close=True,
-            )
+        self.user_agent = self.config.get("user_agent", get_random_ua())
+        self.ssl_verify = self.config.get("ssl_verify", False)
+        self.jitter_min = self.config.get("jitter_min_ms", 0)
+        self.jitter_max = self.config.get("jitter_max_ms", 500)
+        self.headers = {"User-Agent": self.user_agent, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.5", "Accept-Encoding": "gzip, deflate", "DNT": "1", "Connection": "keep-alive"}
 
-    async def _fetch(self, session, url: str, method: str = "GET", data=None) -> Dict:
+    def _jitter(self):
+        """Sleep for a random short duration to avoid WAF rate-limiting."""
+        if self.jitter_max > 0:
+            delay = random.uniform(self.jitter_min / 1000, self.jitter_max / 1000)
+            time.sleep(delay)
+
+    @staticmethod
+    def _needs_ua(headers: dict) -> dict:
+        h = dict(headers)
+        if "User-Agent" not in h:
+            h["User-Agent"] = get_random_ua()
+        return h
+
+    async def _fetch(self, client: httpx.AsyncClient, url: str, method: str = "GET", data=None, extra_headers: dict = None) -> Dict:
         """Fetch a single URL asynchronously."""
-        if not AIOHTTP_AVAILABLE:
-            return {"url": url, "error": "aiohttp not installed. pip install aiohttp"}
+        if not HTTPX_AVAILABLE:
+            return {"url": url, "error": "httpx not installed. pip install httpx"}
+        headers = self._needs_ua(dict(self.headers))
+        if extra_headers:
+            headers.update(extra_headers)
+        self._jitter()
         try:
-            async with asyncio.Semaphore(self.semaphore_limit):
-                if method == "POST":
-                    async with session.post(url, headers=self.headers, data=data, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
-                        return {
-                            "url": url,
-                            "status": resp.status,
-                            "headers": dict(resp.headers),
-                            "content_length": len(await resp.read()),
-                        }
-                elif method == "HEAD":
-                    async with session.head(url, headers=self.headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
-                        return {
-                            "url": url,
-                            "status": resp.status,
-                            "headers": dict(resp.headers),
-                        }
-                else:
-                    async with session.get(url, headers=self.headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
-                        return {
-                            "url": url,
-                            "status": resp.status,
-                            "content_type": resp.headers.get("Content-Type", ""),
-                            "content_length": len(await resp.read()),
-                        }
+            if method == "POST":
+                resp = await client.post(url, headers=headers, data=data, timeout=self.timeout, follow_redirects=False)
+            elif method == "HEAD":
+                resp = await client.head(url, headers=headers, timeout=self.timeout, follow_redirects=False)
+            else:
+                resp = await client.get(url, headers=headers, timeout=self.timeout, follow_redirects=False)
+            return {
+                "url": url,
+                "status": resp.status_code,
+                "headers": dict(resp.headers),
+                "content": resp.text if resp.status_code < 500 else "",
+                "content_length": len(resp.content),
+            }
         except asyncio.TimeoutError:
             return {"url": url, "error": "timeout"}
         except Exception as e:
             return {"url": url, "error": str(e)}
 
-    async def fetch_urls(self, urls: List[str]) -> List[Dict]:
-        """Fetch multiple URLs concurrently."""
-        if not AIOHTTP_AVAILABLE:
-            return [{"error": "aiohttp not installed"}]
-        async with aiohttp.ClientSession(connector=self._connector, headers=self.headers) as session:
-            tasks = [self._fetch(session, url) for url in urls]
+    async def fetch_urls(self, urls: List[str], extra_headers: dict = None) -> List[Dict]:
+        """Fetch multiple URLs concurrently using httpx."""
+        if not HTTPX_AVAILABLE:
+            return [{"error": "httpx not installed"}]
+        limits = httpx.Limits(max_connections=200, max_keepalive_connections=20)
+        async with httpx.AsyncClient(verify=self.ssl_verify, limits=limits, http2=True) as client:
+            sem = asyncio.Semaphore(self.semaphore_limit)
+
+            async def bounded_fetch(url):
+                async with sem:
+                    return await self._fetch(client, url, extra_headers=extra_headers)
+
+            tasks = [bounded_fetch(u) for u in urls]
             return await asyncio.gather(*tasks)
 
     async def fuzz_directories(self, base_url: str, wordlist: List[str], extensions: List[str] = None) -> List[Dict]:
@@ -86,14 +95,9 @@ class AsyncEngine:
             if extensions and "." not in word:
                 for ext in extensions:
                     urls.append(urljoin(base_url, f"{word}.{ext}"))
-        results = await self.fetch_urls(urls)
-        interesting = [
-            r for r in results
-            if "status" in r and r["status"] in (200, 201, 204, 301, 302, 307, 308, 401, 403, 405, 500, 502, 503)
-        ]
-        return interesting
+        return await self.fetch_urls(urls)
 
-    def run(self, urls: List[str]) -> List[Dict]:
+    def run(self, urls: List[str], extra_headers: dict = None) -> List[Dict]:
         """Synchronous wrapper for async fetching."""
         if not urls:
             return []
@@ -102,7 +106,7 @@ class AsyncEngine:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(self.fetch_urls(urls))
+        return loop.run_until_complete(self.fetch_urls(urls, extra_headers=extra_headers))
 
     def run_fuzz(self, base_url: str, wordlist: List[str], extensions: List[str] = None) -> List[Dict]:
         """Synchronous wrapper for async fuzzing."""

@@ -1,13 +1,14 @@
 """
 Report module for BBAT.
-Aggregates results and generates Markdown/HTML reports.
+Aggregates results and generates Markdown/HTML reports using SQLite.
 """
 
 import json
 import os
-import re
 from datetime import datetime
 from typing import Dict, List
+
+from modules.db import BBATDatabase
 
 
 class ReportModule:
@@ -16,11 +17,10 @@ class ReportModule:
     def __init__(self, config: dict):
         self.config = config.get("reporting", {})
         self.formats = self.config.get("formats", ["json", "markdown"])
+        self.db = BBATDatabase()
 
-    def load_result(self, filepath: str) -> dict:
-        """Load a JSON result file."""
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
+    def _db(self) -> BBATDatabase:
+        return self.db
 
     def generate_markdown(self, results: Dict, target: str) -> str:
         """Generate a Markdown report from results."""
@@ -34,111 +34,45 @@ class ReportModule:
             f"",
         ]
 
-        # Recon section
-        if "recon" in results:
-            lines.append("## Reconnaissance")
-            recon = results["recon"]
-            lines.append(f"- Subdomains found: {len(recon.get('subdomains', []))}")
-            lines.append(f"- DNS records: {len(recon.get('dns_records', {}))} types")
-            lines.append(f"- Open ports: {len(recon.get('port_scan', []))}")
+        target_id = self._db().get_target_id(target)
+
+        # Recon stats from DB
+        if target_id:
+            stats = self._db().get_stats()
+            lines.append("## Summary")
+            lines.append(f"- Critical: {stats['critical']} | High: {stats['high']} | Medium: {stats['medium']} | Low: {stats['low']}")
+            lines.append(f"- Endpoints: {stats['endpoints']} | Subdomains: {stats['subdomains']}")
             lines.append("")
 
-        # CT Log section
-        if "ctlog" in results:
-            lines.append("## Certificate Transparency Logs")
-            ctlog = results.get("ctlog", {})
-            subs = ctlog.get("subdomains", [])
-            if isinstance(subs, list):
-                lines.append(f"- Subdomains from CT logs: {len(subs)}")
-                for sub in subs[:20]:
-                    lines.append(f"  - `{sub}`")
-            lines.append("")
+            findings = self._db().get_findings(limit=50)
+            if findings:
+                lines.append("## Top Findings")
+                for f in findings:
+                    sev = f.get("severity", "info").upper()
+                    lines.append(f"- **[{sev}]** {f.get('type')}: {f.get('description', '')[:200]}")
+                lines.append("")
 
-        # Crawler section
-        if "crawl" in results:
-            lines.append("## Crawler Results")
-            crawl = results["crawl"]
-            lines.append(f"- Pages crawled: {crawl.get('pages_crawled', 0)}")
-            lines.append(f"- Endpoints discovered: {crawl.get('endpoints', [])}")
-            lines.append(f"- Forms found: {len(crawl.get('forms', []))}")
-            lines.append("")
+            subs = self._db().get_subdomains()[:20]
+            if subs:
+                lines.append("## Subdomains")
+                for s in subs:
+                    lines.append(f"- `{s}`")
+                lines.append("")
 
-        # Fuzzer section
-        if "fuzz" in results:
-            lines.append("## Fuzzer Results")
-            fuzz = results.get("fuzz", {})
-            items = fuzz.get("items", [])
-            lines.append(f"- Interesting responses: {len(items)}")
-            for item in items[:10]:
-                lines.append(f"  - `{item.get('url')}` → {item.get('status_code')}")
-            lines.append("")
-
-        # Scanner section
-        if "scan" in results:
-            lines.append("## Vulnerability Scan")
-            scan = results["scan"]
-            findings = scan.get("findings", [])
-            lines.append(f"- Total findings: {scan.get('findings_count', 0)}")
-            for finding in findings:
-                sev = finding.get("severity", "info").upper()
-                lines.append(f"- **[{sev}]** {finding.get('type')}: {finding.get('description', '')[:200]}")
-            lines.append("")
-
-        # Takeover section
-        if "takeover" in results:
-            lines.append("## Subdomain Takeover")
-            takeover = results.get("takeover", [])
-            lines.append(f"- Potential takeovers: {len(takeover)}")
-            for item in takeover[:10]:
-                lines.append(f"  - `{item.get('subdomain')}` via {item.get('service')} (severity: {item.get('severity')})")
-            lines.append("")
-
-        # Fingerprint section
-        if "fingerprint" in results:
-            lines.append("## Technology Fingerprint")
-            fp = results.get("fingerprint", {})
-            techs = fp.get("technologies", [])
-            lines.append(f"- Technologies detected: {len(techs)}")
-            for t in techs:
-                lines.append(f"  - {t.get('name')} ({t.get('category')})")
-            lines.append("")
+            techs = self._db().get_technologies()[:20]
+            if techs:
+                lines.append("## Technologies")
+                for t in techs:
+                    lines.append(f"- {t['name']} ({t['category']}) [confidence: {t['confidence']}]")
+                lines.append("")
 
         lines.append("---")
-        lines.append("Report generated by BBAT v2.0.0")
+        lines.append("Report generated by BBAT v3.1.0")
         return "\n".join(lines)
-
-    def generate_html(self, results: Dict, target: str) -> str:
-        """Generate an HTML report from results."""
-        md = self.generate_markdown(results, target)
-        # Simple markdown-to-HTML conversion
-        html_lines = [
-            "<!DOCTYPE html>",
-            "<html><head><title>BBAT Report</title></head><body>",
-            f"  <h1>BBAT Scan Report</h1>",
-            f"  <p><strong>Target:</strong> {target}</p>",
-            f"  <p><strong>Generated:</strong> {datetime.utcnow().isoformat()}Z</p>",
-            "  <hr>",
-        ]
-        # Convert markdown-like lines to HTML (very basic)
-        for line in md.split("\n"):
-            if line.startswith("## "):
-                html_lines.append(f"  <h2>{line[3:]}</h2>")
-            elif line.startswith("- "):
-                html_lines.append(f"  <li>{line[2:]}</li>")
-            elif line.startswith("**"):
-                html_lines.append(f"  <p>{line}</p>")
-            else:
-                html_lines.append(f"  <p>{line}</p>")
-        html_lines.extend([
-            "  <hr>",
-            "  <p><em>Generated by BBAT v2.0.0</em></p>",
-            "</body></html>",
-        ])
-        return "\n".join(html_lines)
 
     def generate_and_save(self, results: Dict, target: str, output_dir: str):
         """Generate reports in all configured formats and save them."""
-        safe_target = re.sub(r'[^a-zA-Z0-9._-]', '_', target)
+        safe_target = os.path.basename(os.path.normpath(target)).replace(":", "_")
         for fmt in self.formats:
             if fmt == "markdown":
                 content = self.generate_markdown(results, target)
@@ -147,8 +81,31 @@ class ReportModule:
                     f.write(content)
                 print(f"[+] Markdown report saved to {filepath}")
             elif fmt == "html":
-                content = self.generate_html(results, target)
+                content = self._md_to_html(self.generate_markdown(results, target), target)
                 filepath = os.path.join(output_dir, f"report_{safe_target}.html")
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(content)
                 print(f"[+] HTML report saved to {filepath}")
+
+    def _md_to_html(self, md: str, target: str) -> str:
+        """Simple markdown-to-HTML conversion."""
+        html_lines = [
+            "<!DOCTYPE html>",
+            "<html><head><title>BBAT Report</title></head><body>",
+            f"  <h1>BBAT Scan Report</h1>",
+            f"  <p><strong>Target:</strong> {target}</p>",
+            "  <hr>",
+        ]
+        for line in md.split("\n"):
+            if line.startswith("## "):
+                html_lines.append(f"  <h2>{line[3:]}</h2>")
+            elif line.startswith("- "):
+                html_lines.append(f"  <li>{line[2:]}</li>")
+            else:
+                html_lines.append(f"  <p>{line}</p>")
+        html_lines.extend([
+            "  <hr>",
+            "  <p><em>Generated by BBAT v3.1.0</em></p>",
+            "</body></html>",
+        ])
+        return "\n".join(html_lines)

@@ -1,14 +1,9 @@
 """
 Dashboard module for BBAT.
-Simple Flask-based HTML dashboard for viewing scan results.
-Requires: pip install flask
-Run: python main.py dashboard
+Flask-based HTML dashboard backed by SQLite.
 """
 
 import os
-import json
-import glob
-from datetime import datetime
 
 # Optional dependency
 try:
@@ -18,23 +13,24 @@ try:
 except ImportError:
     FLASK_AVAILABLE = False
 
-# HTML template for the dashboard
+from modules.db import BBATDatabase
+
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+m    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BBAT Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
-        .header { background: #1e293b; padding: 20px 40px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+        body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background: #0f172a; color: #e2e8f0; }
+        .header { background: #1e293b; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
         .header h1 { color: #38bdf8; font-size: 1.8rem; }
         .container { padding: 40px; max-width: 1400px; margin: 0 auto; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .stat-card { background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; }
-        .stat-card h3 { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+        .stat-card h3 { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; margin-bottom: 8px; }
         .stat-card .value { font-size: 2rem; font-weight: 700; color: #38bdf8; }
         .stat-card.critical .value { color: #ef4444; }
         .stat-card.high .value { color: #f59e0b; }
@@ -42,19 +38,20 @@ DASHBOARD_TEMPLATE = """
         .section-header { padding: 16px 20px; background: #252f47; border-bottom: 1px solid #334155; }
         .section-header h2 { font-size: 1.1rem; color: #f8fafc; }
         .section-content { padding: 20px; }
-        pre { background: #0f172a; padding: 16px; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; }
         .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
         .badge-critical { background: #ef444422; color: #ef4444; border: 1px solid #ef4444; }
         .badge-high { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b; }
+        .badge-medium { background: #eab30822; color: #eab308; border: 1px solid #eab308; }
+        .badge-info { background: #3b82f622; color: #3b82f6; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #334155; font-size: 0.85rem; }
         th { color: #94a3b8; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
         tr:hover td { background: #252f47; }
         .empty { text-align: center; color: #64748b; padding: 40px; }
         .nav { position: fixed; left: 0; top: 0; bottom: 0; width: 240px; background: #1e293b; border-right: 1px solid #334155; padding: 20px; }
-        .nav h2 { color: #38bdf8; margin-bottom: 20px; font-size: 1.2rem; }
+        .nav h2 { color: #38bdf8; margin-bottom: 20px; }
         .nav a { display: block; color: #94a3b8; text-decoration: none; padding: 8px 12px; border-radius: 4px; margin-bottom: 4px; font-size: 0.9rem; }
-        .nav a:hover, .nav a.active { background: #252f47; color: #f8fafc; }
+        .nav a:hover { background: #252f47; color: #f8fafc; }
         .main-content { margin-left: 260px; }
     </style>
 </head>
@@ -68,48 +65,28 @@ DASHBOARD_TEMPLATE = """
         <a href="/?view=technologies">Technologies</a>
     </div>
     <div class="main-content">
-        <div class="header">
-            <h1>BBAT Dashboard</h1>
-        </div>
+        <div class="header"><h1>BBAT Dashboard</h1></div>
         <div class="container">
             <div class="stats">
-                <div class="stat-card">
-                    <h3>Total Scans</h3>
-                    <div class="value">{{ stats.total_scans }}</div>
-                </div>
-                <div class="stat-card critical">
-                    <h3>Critical</h3>
-                    <div class="value">{{ stats.critical }}</div>
-                </div>
-                <div class="stat-card high">
-                    <h3>High</h3>
-                    <div class="value">{{ stats.high }}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Medium</h3>
-                    <div class="value">{{ stats.medium }}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Endpoints</h3>
-                    <div class="value">{{ stats.endpoints }}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Subdomains</h3>
-                    <div class="value">{{ stats.subdomains }}</div>
-                </div>
+                <div class="stat-card"><h3>Total Scans</h3><div class="value">{{ stats.total_scans }}</div></div>
+                <div class="stat-card critical"><h3>Critical</h3><div class="value">{{ stats.critical }}</div></div>
+                <div class="stat-card high"><h3>High</h3><div class="value">{{ stats.high }}</div></div>
+                <div class="stat-card"><h3>Medium</h3><div class="value">{{ stats.medium }}</div></div>
+                <div class="stat-card"><h3>Endpoints</h3><div class="value">{{ stats.endpoints }}</div></div>
+                <div class="stat-card"><h3>Subdomains</h3><div class="value">{{ stats.subdomains }}</div></div>
             </div>
-
             <div class="section">
                 <div class="section-header"><h2>Recent Findings</h2></div>
                 <div class="section-content">
                     {% if findings %}
                     <table>
-                        <tr><th>Severity</th><th>Type</th><th>Description</th></tr>
+                        <tr><th>Severity</th><th>Type</th><th>Description</th><th>Source</th></tr>
                         {% for f in findings[:50] %}
                         <tr>
                             <td><span class="badge badge-{{ f.severity|lower }}">{{ f.severity }}</span></td>
                             <td>{{ f.type }}</td>
-                            <td>{{ f.description|truncate(100, True, '...') }}</td>
+                            <td>{{ f.description[:100] }}{% if f.description|length > 100 %}...{% endif %}</td>
+                            <td><code>{{ f.source }}</code></td>
                         </tr>
                         {% endfor %}
                     </table>
@@ -125,90 +102,37 @@ DASHBOARD_TEMPLATE = """
 """
 
 
-def load_scan_data(output_dir: str = "./output"):
-    """Load and aggregate all JSON scan results from the output directory."""
-    stats = {
-        "total_scans": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0,
-        "endpoints": 0, "subdomains": 0
-    }
-    findings = []
-    endpoints = []
-    subdomains = []
-    technologies = []
-
-    if not os.path.exists(output_dir):
-        return stats, findings, endpoints, subdomains, technologies
-
-    for filepath in glob.glob(os.path.join(output_dir, "*.json")):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                stats["total_scans"] += 1
-                if "findings" in data:
-                    findings.extend(data["findings"])
-                if "scan" in data and data["scan"].get("findings"):
-                    findings.extend(data["scan"]["findings"])
-                if isinstance(data, dict):
-                    if "endpoints" in data and isinstance(data["endpoints"], list):
-                        endpoints.extend(data["endpoints"])
-                    if "subdomains" in data:
-                        for sub in data["subdomains"]:
-                            subdomains.append(sub.get("subdomain", sub) if isinstance(sub, dict) else sub)
-                    if "technologies" in data:
-                        for t in data["technologies"]:
-                            technologies.append({
-                                "name": t.get("name"),
-                                "category": t.get("category", ""),
-                                "confidence": t.get("confidence", "medium")
-                            })
-        except Exception:
-            continue
-
-    for f in findings:
-        sev = f.get("severity", "info").lower()
-        if sev in stats:
-            stats[sev] += 1
-
-    stats["endpoints"] = len(set(endpoints))
-    stats["subdomains"] = len(set(subdomains))
-    unique_findings = []
-    seen = set()
-    for f in findings:
-        key = (f.get("type"), f.get("url"), f.get("description", "")[:50])
-        if key not in seen:
-            seen.add(key)
-            unique_findings.append({
-                "type": f.get("type", "unknown"),
-                "severity": f.get("severity", "info"),
-                "description": f.get("description", "N/A"),
-                "source": f.get("url", ""),
-            })
-    return stats, unique_findings, list(set(endpoints)), list(set(subdomains)), technologies
+def _load_db() -> BBATDatabase:
+    return BBATDatabase()
 
 
 if FLASK_AVAILABLE:
     @app.route("/")
     def index():
-        view = request.args.get("view", "overview")
-        stats, findings, endpoints, subdomains, technologies = load_scan_data()
-        return render_template_string(
-            DASHBOARD_TEMPLATE,
-            stats=stats,
-            findings=findings,
-            endpoints=endpoints,
-            subdomains=subdomains,
-            technologies=technologies,
-        )
+        db = _load_db()
+        stats = db.get_stats()
+        findings = db.get_findings(limit=1000)
+        return render_template_string(DASHBOARD_TEMPLATE, stats=stats, findings=findings)
 
     @app.route("/api/stats")
     def api_stats():
-        stats, _, _, _, _ = load_scan_data()
-        return jsonify(stats)
+        db = _load_db()
+        return jsonify(db.get_stats())
 
     @app.route("/api/findings")
     def api_findings():
-        _, findings, _, _, _ = load_scan_data()
-        return jsonify(findings)
+        db = _load_db()
+        return jsonify(db.get_findings(limit=5000))
+
+    @app.route("/api/endpoints")
+    def api_endpoints():
+        db = _load_db()
+        return jsonify(db.get_endpoints(limit=5000))
+
+    @app.route("/api/subdomains")
+    def api_subdomains():
+        db = _load_db()
+        return jsonify(db.get_subdomains())
 
 
 if __name__ == "__main__":

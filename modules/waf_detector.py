@@ -1,16 +1,13 @@
 """
 WAFDetector module for BBAT.
-Detects Web Application Firewalls by analyzing HTTP responses.
+Detects Web Application Firewalls via passive header inspection + active probing.
 """
 
-import requests
-import re
+import httpx
 from typing import List, Dict
-import urllib3
+import re
+from modules.utils import get_random_ua
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# WAF signatures: header or body patterns
 WAF_SIGNATURES = [
     {"name": "Cloudflare", "headers": {"Server": r"cloudflare", "CF-RAY": r""}, "body": r"cloudflare|CF_", "type": "CDN/WAF"},
     {"name": "Akamai", "headers": {"Server": r"AkamaiGHost", "X-Akamai-Request-ID": r""}, "body": r"", "type": "CDN/WAF"},
@@ -31,46 +28,43 @@ WAF_SIGNATURES = [
     {"name": "Palo Alto Next-Gen Firewall", "headers": {}, "body": r"Palo Alto|PA-series", "type": "WAF"},
     {"name": "Radware AppWall", "headers": {"X-SL-CompState": r"", "Server": r"AppWall"}, "body": r"", "type": "WAF"},
     {"name": "GreyWizard", "headers": {"X-GreyWizard-Block": r"", "X-GreyWizard-Protection": r""}, "body": r"", "type": "WAF"},
-    {"name": "ASP.NET Generic", "headers": {"X-AspNet-Version": r"", "X-AspNetMvc-Version": r""}, "body": r"", "type": "Framework"},
-    {"name": "Kona Site Defender (Akamai)", "headers": {"Server": r"AkamaiGHost", "X-RateLimit-Limit": r""}, "body": r"", "type": "WAF"},
-    {"name": "Astra", "headers": {}, "body": r"astra|astra security", "type": "WAF"},
-    {"name": "Comodo", "headers": {}, "body": r"Protected by COMODO WAF", "type": "WAF"},
-    {"name": "Juniper", "headers": {}, "body": r"Juniper Networks|Junos", "type": "WAF"},
-    {"name": "NSFocus", "headers": {}, "body": r"NSFocus", "type": "WAF"},
-    {"name": "Citrix NetScaler", "headers": {}, "body": r"Citrix NetScaler", "type": "WAF"},
-    {"name": "Edgecast / Verizon", "headers": {"Server": r"ECD"}, "body": r"", "type": "CDN/WAF"},
-    {"name": "Alibaba Cloud WAF", "headers": {"Server": r"aliyun"}, "body": r"", "type": "WAF"},
-    {"name": "Tencent Cloud WAF", "headers": {"Server": r"TencentWAF"}, "body": r"", "type": "WAF"},
-    {"name": "Baidu Cloud WAF", "headers": {}, "body": r"Baiduyun|百度云防护", "type": "WAF"},
-    {"name": "UCloud", "headers": {}, "body": r"UCloud", "type": "WAF"},
+]
+
+# Benign but suspicious payload triggers to validate WAF behavior
+PROBE_PAYLOADS = [
+    "/?id=' OR '1'='1",
+    "/?search=<eval>alert(1)</eval>",
+    "/?file=../../../etc/passwd",
+    "/?redirect=https://evil.com",
 ]
 
 
 class WAFDetectorModule:
-    """Detects Web Application Firewalls from HTTP responses."""
+    """Detects Web Application Firewalls from HTTP responses + active probing."""
 
     def __init__(self, config: dict):
         self.config = config.get("waf_detector", {})
-        self.headers = {
-            "User-Agent": config.get("recon", {}).get("user_agent", "BBAT/1.0")
-        }
         self.timeout = self.config.get("timeout", 10)
+        self._ssl = config.get("recon", {}).get("ssl_verify", False)
+
+    def _fetch(self, url: str) -> httpx.Response:
+        return httpx.get(url, headers={"User-Agent": get_random_ua()}, timeout=self.timeout, verify=self._ssl, follow_redirects=False)
 
     def detect(self, target: str) -> List[Dict]:
-        """Detect WAF/CDN for a given URL."""
+        """Detect WAF/CDN for a given URL using passive + active probing."""
         from modules.utils import normalize_url
         url = normalize_url(target)
         findings = []
+
         try:
-            resp = requests.get(url, headers=self.headers, timeout=self.timeout, verify=False)
+            # Passive header/body inspection
+            resp = self._fetch(url)
             headers = {k.lower(): v for k, v in resp.headers.items()}
             body = resp.text
 
             for sig in WAF_SIGNATURES:
                 detected = False
                 confidence = "low"
-
-                # Header checks (case-insensitive)
                 for header_key, pattern in sig["headers"].items():
                     header_value = headers.get(header_key.lower(), "")
                     if pattern and re.search(pattern, header_value, re.IGNORECASE):
@@ -79,27 +73,39 @@ class WAFDetectorModule:
                     elif header_value and not pattern:
                         detected = True
                         confidence = "medium"
-
-                # Body check
                 if sig["body"] and re.search(sig["body"], body, re.IGNORECASE):
                     detected = True
                     confidence = "high"
-
                 if detected:
-                    findings.append({
-                        "waf": sig["name"],
-                        "type": sig["type"],
-                        "confidence": confidence,
-                        "url": url,
-                    })
-        except requests.RequestException:
+                    findings.append({"waf": sig["name"], "type": sig["type"], "confidence": confidence, "url": url, "method": "passive"})
+
+            # Active probing: compare benign vs probe responses
+            if not findings:
+                print(f"[*] Active WAF probing on {url}...")
+                base_resp = self._fetch(url)
+                for probe in PROBE_PAYLOADS:
+                    probe_url = url.rstrip("/") + probe
+                    try:
+                        probe_resp = self._fetch(probe_url)
+                        if base_resp.status_code != probe_resp.status_code or "blocked" in probe_resp.text.lower():
+                            findings.append({
+                                "waf": "Generic WAF (Active Probe)",
+                                "type": "WAF",
+                                "confidence": "medium",
+                                "url": url,
+                                "method": "active_probe",
+                                "probe": probe,
+                            })
+                            break
+                    except Exception:
+                        continue
+        except Exception:
             pass
 
-        # Deduplicate
         unique = []
         seen = set()
         for f in findings:
-            key = f["waf"]
+            key = (f["waf"], f["confidence"])
             if key not in seen:
                 seen.add(key)
                 unique.append(f)
@@ -112,10 +118,9 @@ class WAFDetectorModule:
         for url in urls:
             findings = self.detect(url)
             all_findings.extend(findings)
-
         wafs = {f["waf"] for f in all_findings}
         types = {f["type"] for f in all_findings}
-        print(f"[+] WAF detection complete. Detected {len(wafs)} unique WAFs/CDNs across {len(types)} categories.")
+        print(f"[+] WAF detection complete. Detected {len(wafs)} unique WAFs/CDNs.")
         return {
             "urls_checked": len(urls),
             "wafs_detected": list(wafs),
